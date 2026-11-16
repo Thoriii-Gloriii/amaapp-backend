@@ -13,9 +13,17 @@ All original copyright notices and license files are preserved.
 
 The backend architecture, APK upload pipeline, authentication system, audit log,
 rate limiting, storage abstraction, ClamAV integration, and F-Droid index builder
-are derived from this project. The Next.js frontend has been removed; new features
-(listing types, developer profiles, reporting, ratings, comments, search) are
-additions built in the same style.
+are derived from this project. The Next.js frontend has been removed.
+
+**AmaApp-added features** (not present in spine):
+- `ListingType` enum (`APK` / `WEB_APP`) and `WebAppListing` model
+- Developer profile fields (`bio`, `links`, `avatar_url`) and `/u/{username}` route
+- Web-app URL moderation service (scheme allow-list, SSRF guard, admin review queue)
+- `Report` model with rate-limited reporting endpoints and admin queue
+- `Rating` and `Comment` models (1–5 stars, threaded, soft-delete)
+- Full-text search endpoint (`GET /api/v1/listings/search`) with pg_trgm indexes
+- VirusTotal hash lookup service with graceful fallback when no API key is set
+- ClamAV enabled by default (removed optional `profiles: ["clamav"]` from compose)
 
 ---
 
