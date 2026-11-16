@@ -1,4 +1,4 @@
-name: fdroid-store
+﻿name: amaapp-backend
 
 services:
   postgres:
@@ -87,8 +87,8 @@ services:
       CLAMAV_HOST: ${CLAMAV_HOST:-}
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       CLAMAV_MAX_STREAM_MB: ${CLAMAV_MAX_STREAM_MB:-100}
-      # Trivy server URL. The backend itself never scans — only the
-      # worker does — but it needs to see the env var to compute
+      # Trivy server URL. The backend itself never scans â€” only the
+      # worker does â€” but it needs to see the env var to compute
       # ``settings.trivy_available`` for the admin UI + reject toggle
       # flips when no scanner is wired in.
       TRIVY_SERVER_URL: ${TRIVY_SERVER_URL:-}
@@ -140,7 +140,7 @@ services:
     # for per-IP rate limiting (the frontend nginx overwrites it with the
     # real client IP; see FORWARDED_ALLOW_IPS above). If the API port were
     # published on 0.0.0.0, any remote client could hit the API directly and
-    # forge ``X-Forwarded-For`` to evade the auth-endpoint rate limits — so
+    # forge ``X-Forwarded-For`` to evade the auth-endpoint rate limits â€” so
     # it's reachable only from the host itself (local dev / curl), never
     # from the network. Production traffic always goes through the frontend
     # on :8080.
@@ -192,9 +192,9 @@ services:
       # from. Both bind the same ``backup_tmp`` volume below.
       BACKUP_TMP_DIR: /data/backup-tmp
       # CVE scanner: when set, the worker's trivy CLI talks to the
-      # trivy server container at this URL (in CLIENT mode — file
+      # trivy server container at this URL (in CLIENT mode â€” file
       # parsing happens worker-side, DB lookups go to the server).
-      # Empty / unset → CVE scanning is disabled; the worker task
+      # Empty / unset â†’ CVE scanning is disabled; the worker task
       # marks every queued scan as SKIPPED.
       TRIVY_SERVER_URL: ${TRIVY_SERVER_URL:-}
     command: ["python", "-m", "arq", "app.workers.tasks.WorkerSettings"]
@@ -213,8 +213,8 @@ services:
       # output where the streaming download endpoint can find it.
       - backup_tmp:/data/backup-tmp
     # arq re-publishes a heartbeat key in Redis every
-    # ``health_check_interval`` seconds — 60 s, set in WorkerSettings
-    # (arq's own default is 3600 s) — with a TTL of interval + 1 s.
+    # ``health_check_interval`` seconds â€” 60 s, set in WorkerSettings
+    # (arq's own default is 3600 s) â€” with a TTL of interval + 1 s.
     # ``--check`` returns 0 iff the key exists, so a worker that stopped
     # pumping turns unhealthy within ~3 min (key expiry, then 3 failed
     # probes 30 s apart). If Redis is unreachable every probe fails.
@@ -225,11 +225,11 @@ services:
       retries: 3
       start_period: 60s
 
-  # Optional Trivy server — runs the official aquasec/trivy image in
+  # Optional Trivy server â€” runs the official aquasec/trivy image in
   # ``server`` mode. The worker's trivy CLI talks to it via HTTP when
   # ``TRIVY_SERVER_URL`` is set on the worker (see env above). The server
   # owns the vulnerability database (~200 MB on disk, refreshed daily by
-  # trivy itself) and clients only do file-side parsing — so the worker
+  # trivy itself) and clients only do file-side parsing â€” so the worker
   # doesn't carry the DB and only one container needs to refresh it.
   #
   # Opt-in: this service only runs under the ``trivy`` compose profile.
@@ -244,15 +244,15 @@ services:
     volumes:
       - trivy_cache:/cache
     # Internal-only: the worker connects via the compose network. No
-    # host port published — Trivy server has no auth and shouldn't be
+    # host port published â€” Trivy server has no auth and shouldn't be
     # exposed externally.
     expose:
       - "4954"
 
   # Reference APK source proxy speaking the v1 source-proxy protocol
   # (see docs/proxy-protocol.md) against any F-Droid-compatible repo
-  # — official f-droid.org, IzzyOnDroid, Guardian Project, another
-  # fdroid-store instance, …. ~350 lines of FastAPI + httpx, no
+  # â€” official f-droid.org, IzzyOnDroid, Guardian Project, another
+  # fdroid-store instance, â€¦. ~350 lines of FastAPI + httpx, no
   # persistent state, no JDK / native deps.
   #
   # Opt-in via the ``proxy-fdroid`` compose profile. Set
@@ -280,7 +280,7 @@ services:
       # proxy.)
       PROXY_SHARED_SECRET: ${PROXY_FDROID_SECRET:-}
     # Same lockdown shape as the other services. The proxy is stateless
-    # — no volume, no writable surface beyond /tmp.
+    # â€” no volume, no writable surface beyond /tmp.
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -296,68 +296,13 @@ services:
     mem_limit: ${PROXY_FDROID_MEM_LIMIT:-2g}
     pids_limit: ${PROXY_FDROID_PIDS_LIMIT:-128}
     # Internal-only: the worker dials it via the compose network. No
-    # host port published — admins should never expose proxies to the
+    # host port published â€” admins should never expose proxies to the
     # public internet directly.
     expose:
       - "8000"
 
-  # Single nginx-served frontend image: static SPA + reverse-proxy to the
-  # backend + nginx-served /_protected for X-Accel-Redirect downloads. No
-  # URL is baked in at build time, so this image can be pushed to a registry
-  # and reused on any host (only ``UPSTREAM_BACKEND`` is needed at runtime).
-  frontend:
-    image: ghcr.io/dim145/fdroid-store-frontend:latest
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      UPSTREAM_BACKEND: backend:8000
-      # Set ENABLE_HSTS=1 in your .env when the deployment is behind TLS.
-      # Defaults off so local HTTP testing isn't broken by browsers
-      # pinning HSTS after a single visit.
-      ENABLE_HSTS: ${ENABLE_HSTS:-0}
-      HSTS_MAX_AGE: ${HSTS_MAX_AGE:-31536000}
-      # Behind a reverse proxy (BunkerWeb, Traefik, Caddy, a CDN…): its
-      # address(es) as seen by this container, comma/space separated IPs or
-      # CIDRs. nginx then takes the client IP from that proxy's
-      # X-Forwarded-For, so per-IP rate limits, audit logs and access logs
-      # see real clients instead of one shared proxy IP. Empty = off (the
-      # TCP peer is the client — right when nginx is the edge).
-      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
-      # Request-body caps. UPLOAD_MAX_BODY_SIZE applies only to the upload
-      # routes (APK upload/inspect, app media, backup restore — listed in
-      # frontend/nginx.conf.template) and must cover the admin APK size cap
-      # (upload_max_apk_mb, max 2000 MB) plus multipart overhead; every
-      # other request is capped at API_MAX_BODY_SIZE.
-      API_MAX_BODY_SIZE: ${API_MAX_BODY_SIZE:-10m}
-      UPLOAD_MAX_BODY_SIZE: ${UPLOAD_MAX_BODY_SIZE:-2100m}
-      # DNS server nginx resolves UPSTREAM_BACKEND with (Docker's embedded
-      # DNS here; change it for podman / k8s / a non-Docker runtime).
-      NGINX_RESOLVER: ${NGINX_RESOLVER:-127.0.0.11}
-    # Same lockdown as the backend. nginx writes its pid to /tmp (the
-    # unprivileged base image already moved it there), and the official
-    # entrypoint expands /etc/nginx/templates → /etc/nginx/conf.d at start,
-    # which needs a writable conf.d. Both are sized tmpfs so a crash loop
-    # can't fill the host's RAM. /tmp also hosts nginx's body temp dirs;
-    # the template never spools proxied bodies there (streamed instead),
-    # so 32 MB is enough even for multi-GB uploads and downloads.
-    read_only: true
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    tmpfs:
-      - /tmp:rw,size=32m,mode=1777
-      - /var/cache/nginx:rw,size=64m,uid=101,gid=101,mode=0700
-      - /etc/nginx/conf.d:rw,size=4m,uid=101,gid=101,mode=0755
-    ports:
-      - "8080:8080"
-    volumes:
-      - storage_data:/data/storage:ro
-    depends_on:
-      - backend
-
+  # NOTE: The Next.js frontend has been removed (AmaApp is a pure API backend).
+  # Swagger docs: http://localhost:8011/api/docs (set ENVIRONMENT=development)
 volumes:
   postgres_data:
   redis_data:
