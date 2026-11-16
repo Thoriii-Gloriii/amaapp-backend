@@ -18,9 +18,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
 from app.core.database import Base
 from app.fdroid import categories_catalog
+from app.models.listing import ListingType  # noqa: F401 — re-exported for schemas
 from app.models.mixins import IdMixin, TimestampMixin
 
 
@@ -130,6 +130,24 @@ class App(Base, IdMixin, TimestampMixin):
         index=True,
     )
 
+    # --- AmaApp additions ---------------------------------------------------
+
+    # Discriminator for the kind of listing.  Defaults to APK so that all
+    # existing rows keep working without a data migration.
+    listing_type: Mapped[ListingType] = mapped_column(
+        Enum(ListingType, name="listing_type"),
+        default=ListingType.APK,
+        nullable=False,
+        index=True,
+    )
+
+    # Every user-submitted listing starts as unreviewed.  Admins clear this
+    # flag when they publish the listing.  Always shown in the API response
+    # so clients can display a "debug / unreviewed" badge.
+    is_unreviewed: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, index=True
+    )
+
     # relationships
     owner = relationship("User", back_populates="apps", foreign_keys=[owner_id])
     apks = relationship(
@@ -145,6 +163,13 @@ class App(Base, IdMixin, TimestampMixin):
         back_populates="app",
         cascade="all, delete-orphan",
         order_by="AppScreenshot.display_order",
+    )
+    # AmaApp: one-to-one relationship to web-app-specific fields (None for APK listings)
+    web_app_listing = relationship(
+        "WebAppListing",
+        back_populates="app",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
     @property

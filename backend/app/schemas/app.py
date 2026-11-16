@@ -3,10 +3,11 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, computed_field
 
 from app.models.app import AppStatus, AppVisibility
 from app.models.apk import ApkStatus
+from app.models.listing import ListingType
 
 
 class CategoryRead(BaseModel):
@@ -90,6 +91,25 @@ class ApkRead(BaseModel):
     reproducibility_verified_at: datetime | None = None
     reproducibility_notes: str | None = None
 
+    # --- AmaApp additions ---------------------------------------------------
+    is_debug_build: bool = False
+    vibe_tool: str | None = None
+    changelog: str | None = None
+
+    @computed_field
+    @property
+    def warning(self) -> str | None:
+        """Clear warning field for unreviewed or debug builds.
+        Required by AmaApp safety policy.
+        """
+        if self.is_debug_build and self.status != ApkStatus.PUBLISHED:
+            return "debug build, unreviewed"
+        elif self.is_debug_build:
+            return "debug build"
+        elif self.status != ApkStatus.PUBLISHED:
+            return "unreviewed"
+        return None
+
 
 class ReproducibilitySet(BaseModel):
     """Body for ``POST /apks/{id}/reproducibility``.
@@ -170,6 +190,10 @@ class ApkUpdate(BaseModel):
     # Move the version between the Beta channel and stable. In auto mode
     # this re-derives the suggested version (clearing it = promotion).
     is_beta: bool | None = None
+    # AmaApp additions
+    is_debug_build: bool | None = None
+    vibe_tool: str | None = Field(default=None, max_length=255)
+    changelog: str | None = None
 
 
 class ApkInspect(BaseModel):
@@ -283,6 +307,55 @@ class ScreenshotRead(BaseModel):
 _DESCRIPTION_MAX = 20_000
 
 
+# ----- Web App Listing Schemas ---------------------------------------------
+class WebAppListingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    app_id: uuid.UUID
+    url: str
+    screenshot_keys: list[str] = Field(default_factory=list)
+    tech_stack: str | None = None
+    url_check_passed: bool | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebAppListingCreate(BaseModel):
+    url: HttpUrl
+    tech_stack: str | None = Field(default=None, max_length=255)
+    screenshot_keys: list[str] = Field(default_factory=list)
+
+
+class WebAppListingUpdate(BaseModel):
+    url: HttpUrl | None = None
+    tech_stack: str | None = Field(default=None, max_length=255)
+    screenshot_keys: list[str] | None = None
+
+
+class AppCreateWebApp(BaseModel):
+    """Body for ``POST /apps/web-app`` — creates a web app listing."""
+    name: str = Field(min_length=1, max_length=255)
+    url: HttpUrl
+    summary: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=_DESCRIPTION_MAX)
+    tech_stack: str | None = Field(default=None, max_length=255)
+    license: str | None = Field(default=None, max_length=128)
+    source_code: HttpUrl | None = None
+    author_name: str | None = Field(default=None, max_length=255)
+    author_email: str | None = Field(default=None, max_length=255)
+    visibility: AppVisibility = AppVisibility.PUBLIC
+    category_ids: list[uuid.UUID] = Field(default_factory=list)
+    screenshot_keys: list[str] = Field(default_factory=list)
+    # Optional package/bundle slug — auto-derived if omitted
+    package_name: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=255,
+        pattern=r"^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+    )
+
+
 class AppCreateFromStagedApk(BaseModel):
     """Body for ``POST /apps/with-staged-apk``. All the listing fields
     the operator filled in, plus the redemption token returned by
@@ -352,6 +425,8 @@ class AppUpdate(BaseModel):
     # field uses ``model_fields_set`` semantics so omitting it leaves the
     # current state alone.
     suggested_version_code: int | None = None
+    # AmaApp: web app update payload if listing_type is web_app
+    web_app: WebAppListingUpdate | None = None
 
 
 class AppAdminUpdate(AppUpdate):
@@ -414,6 +489,10 @@ class AppRead(BaseModel):
     updated_at: datetime
     categories: list[CategoryRead] = Field(default_factory=list)
     is_nsfw: bool = False
+    # AmaApp additions
+    listing_type: ListingType = ListingType.APK
+    is_unreviewed: bool = True
+    web_app_listing: WebAppListingRead | None = None
 
 
 class LocalizationRead(BaseModel):

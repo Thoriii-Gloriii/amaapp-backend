@@ -172,6 +172,9 @@ async def attach_apk_to_app(
     meta: ApkMetadata,
     uploader: User,
     is_beta: bool = False,
+    is_debug_build: bool | None = None,
+    vibe_tool: str | None = None,
+    changelog: str | None = None,
 ) -> Apk:
     """Validate + persist a parsed APK against an existing App.
 
@@ -269,6 +272,9 @@ async def attach_apk_to_app(
         uploaded_by_id=uploader.id,
         published_at=datetime.now(UTC) if initial_status == ApkStatus.PUBLISHED else None,
         is_beta=is_beta,
+        is_debug_build=is_debug_build if is_debug_build is not None else getattr(meta, "is_debug", False),
+        vibe_tool=vibe_tool,
+        changelog=changelog,
     )
     db.add(apk)
     if initial_status == ApkStatus.PUBLISHED:
@@ -887,6 +893,9 @@ async def upload_apk(
     user: Annotated[User, Depends(get_uploader_for_app)],
     file: UploadFile = File(...),
     beta: bool = Form(False),
+    is_debug_build: bool | None = Form(None),
+    vibe_tool: str | None = Form(None),
+    changelog: str | None = Form(None),
 ) -> ApkRead:
     """Upload a new APK for an existing app.
 
@@ -932,7 +941,15 @@ async def upload_apk(
         meta = await parse_or_400(tmp_path)
         await _maybe_scan_upload(db, tmp_path=tmp_path)
         apk = await attach_apk_to_app(
-            db, app=app, tmp_path=tmp_path, meta=meta, uploader=user, is_beta=beta
+            db,
+            app=app,
+            tmp_path=tmp_path,
+            meta=meta,
+            uploader=user,
+            is_beta=beta,
+            is_debug_build=is_debug_build,
+            vibe_tool=vibe_tool,
+            changelog=changelog,
         )
         # Retention policy: trim down to the cap, if any. Runs AFTER
         # the new APK lands so the just-uploaded version stays even
@@ -1105,6 +1122,12 @@ async def update_apk(
             },
             request=request,
         )
+    if "is_debug_build" in payload.model_fields_set and payload.is_debug_build is not None:
+        apk.is_debug_build = payload.is_debug_build
+    if "vibe_tool" in payload.model_fields_set:
+        apk.vibe_tool = payload.vibe_tool.strip() if payload.vibe_tool else None
+    if "changelog" in payload.model_fields_set:
+        apk.changelog = payload.changelog.strip() if payload.changelog else None
     await db.flush()
     await enqueue_reindex()
     return ApkRead.model_validate(apk)
