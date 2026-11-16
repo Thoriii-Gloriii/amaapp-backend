@@ -14,28 +14,21 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession, require_browse_access
 from app.api.v1.apps import _apply_locale
 from app.models.app import App, AppStatus, AppVisibility
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.app import AppRead
+from app.schemas.user import PublicProfile
 
 router = APIRouter()
 
 
-class PublicProfile(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    username: str
-    full_name: str | None
-    member_since: datetime
-    apps: list[AppRead]
-
-
+@router.get("/{username}", response_model=PublicProfile)
 @router.get("/{username}/profile", response_model=PublicProfile)
 async def get_public_profile(
     username: str,
@@ -61,6 +54,7 @@ async def get_public_profile(
             selectinload(App.categories),
             selectinload(App.apks),
             selectinload(App.localizations),
+            selectinload(App.web_app_listing),
         )
         .where(
             App.owner_id == target.id,
@@ -72,15 +66,17 @@ async def get_public_profile(
     apps = list((await db.execute(apps_stmt)).scalars().unique().all())
     if not bool(caller and caller.show_nsfw):
         apps = [a for a in apps if not a.is_nsfw]
-    if not apps:
-        # Indistinguishable from "user doesn't exist" so the route can't be
-        # used to probe which usernames are registered.
+    if not apps and not target.bio and not target.links and target.role == UserRole.USER:
+        # Standard consumer account with no public work or profile bio
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
     preferred_locale = caller.preferred_locale if caller else None
     return PublicProfile(
         username=target.username,
         full_name=target.full_name,
+        bio=target.bio,
+        links=target.links or [],
+        avatar_url=target.avatar_url,
         member_since=target.created_at,
         apps=[
             _apply_locale(AppRead.model_validate(a), a, preferred_locale)

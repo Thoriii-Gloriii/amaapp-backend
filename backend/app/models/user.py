@@ -3,7 +3,7 @@ from __future__ import annotations
 import enum
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Enum, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -27,6 +27,10 @@ class User(Base, IdMixin, TimestampMixin):
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     full_name: Mapped[str | None] = mapped_column(String(255))
+    # Developer profile additions
+    bio: Mapped[str | None] = mapped_column(Text)
+    links: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    avatar_url: Mapped[str | None] = mapped_column(String(512))
 
     # local auth (nullable for OIDC-only users)
     hashed_password: Mapped[str | None] = mapped_column(String(255))

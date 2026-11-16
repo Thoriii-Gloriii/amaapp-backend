@@ -6,6 +6,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from app.models.user import AuthProvider, UserRole
+from app.schemas.app import AppRead
 
 
 class UserRead(BaseModel):
@@ -18,6 +19,9 @@ class UserRead(BaseModel):
     email: str
     username: str
     full_name: str | None
+    bio: str | None = None
+    links: list[str] = Field(default_factory=list)
+    avatar_url: str | None = None
     role: UserRole
     auth_provider: AuthProvider
     is_active: bool
@@ -42,11 +46,26 @@ _LOCALE_PATTERN = r"^[a-zA-Z]{2,3}(-[A-Za-z0-9]{2,4})?$"
 
 class UserUpdate(BaseModel):
     full_name: str | None = Field(default=None, max_length=255)
+    bio: str | None = Field(default=None, max_length=5000)
+    links: list[str] | None = None
+    avatar_url: str | None = Field(default=None, max_length=512)
     show_nsfw: bool | None = None
     # ``"null"`` (JSON null) clears the preference; an empty string is
     # rejected so the API doesn't store junk values that won't match
     # anything in the resolver.
     preferred_locale: str | None = Field(default=None, max_length=16, pattern=_LOCALE_PATTERN)
+
+
+class PublicProfile(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    username: str
+    full_name: str | None = None
+    bio: str | None = None
+    links: list[str] = Field(default_factory=list)
+    avatar_url: str | None = None
+    member_since: datetime
+    apps: list[AppRead] = Field(default_factory=list)
 
 
 class AdminUserCreate(BaseModel):
