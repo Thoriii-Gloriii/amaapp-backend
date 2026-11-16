@@ -333,6 +333,10 @@ class WebAppListingUpdate(BaseModel):
     screenshot_keys: list[str] | None = None
 
 
+class WebAppRejectPayload(BaseModel):
+    reason: str = Field(default="Rejected by administrator", max_length=512)
+
+
 class AppCreateWebApp(BaseModel):
     """Body for ``POST /apps/web-app`` — creates a web app listing."""
     name: str = Field(min_length=1, max_length=255)
