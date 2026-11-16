@@ -16,6 +16,7 @@ from app.api.v1 import (
     me,
     media,
     proxies,
+    ratings,
     setup,
     stats,
     totp,
@@ -38,6 +39,7 @@ api_router.include_router(deploy_tokens.router, prefix="/apps", tags=["deploy-to
 api_router.include_router(github_sources.router, prefix="/apps", tags=["github-sources"])
 api_router.include_router(apps.router, prefix="/apps", tags=["apps"])
 api_router.include_router(apps.router, prefix="/listings", tags=["listings"])
+api_router.include_router(ratings.router, tags=["ratings"])
 api_router.include_router(apks.router, prefix="/apks", tags=["apks"])
 api_router.include_router(categories.router, prefix="/categories", tags=["categories"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
