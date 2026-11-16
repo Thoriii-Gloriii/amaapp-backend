@@ -18,6 +18,7 @@ from app.models.api_key import ApiKey
 from app.models.apk import Apk, ApkStatus
 from app.models.app import App, AppStatus, Category
 from app.models.listing import ListingType
+from app.models.report import Report, ReportStatus
 from app.models.audit import DownloadEvent
 from app.models.audit_log import AuditLog
 from app.models.invite_code import InviteCode
@@ -28,6 +29,7 @@ from app.schemas.app import AppAdminUpdate, AppDetail, AppRead, WebAppRejectPayl
 from app.schemas.audit_log import AuditLogPage, AuditLogRead
 from app.schemas.invite import InviteCodeCreate, InviteCodeRead
 from app.schemas.repo import RepoConfigRead, RepoConfigUpdate
+from app.schemas.report import ReportAdminUpdate, ReportRead
 from app.schemas.user import AdminUserCreate, AdminUserUpdate, UserRead
 from app.services.audit import write_event
 from app.services.queue import enqueue_reindex
@@ -670,6 +672,64 @@ async def admin_reject_web_app(
         detail.owner_username = app.owner.username
     _attach_media_token(detail, app, admin)
     return detail
+
+
+# --------------------------------------------------------------------------
+# Reports moderation
+# --------------------------------------------------------------------------
+@router.get("/reports", response_model=list[ReportRead])
+async def admin_list_reports(
+    db: DbSession,
+    _: Annotated[User, Depends(get_current_admin)],
+    status: ReportStatus | None = Query(default=None),
+    app_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+) -> list[ReportRead]:
+    """List submitted user moderation reports, filtered by status or app."""
+    stmt = select(Report).order_by(Report.created_at.desc())
+    if status is not None:
+        stmt = stmt.where(Report.status == status)
+    if app_id is not None:
+        stmt = stmt.where(Report.app_id == app_id)
+
+    rows = (await db.execute(stmt.limit(limit).offset(offset))).scalars().all()
+    return [ReportRead.model_validate(r) for r in rows]
+
+
+@router.patch("/reports/{report_id}", response_model=ReportRead)
+async def admin_update_report(
+    report_id: uuid.UUID,
+    payload: ReportAdminUpdate,
+    db: DbSession,
+    request: Request,
+    admin: Annotated[User, Depends(get_current_admin)],
+) -> ReportRead:
+    """Update report status (resolve or dismiss) with optional admin notes."""
+    report = (
+        await db.execute(select(Report).where(Report.id == report_id))
+    ).scalar_one_or_none()
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+
+    report.status = payload.status
+    if payload.admin_notes is not None:
+        report.admin_notes = payload.admin_notes
+    report.resolved_by_id = admin.id
+    report.resolved_at = datetime.now(UTC)
+
+    await db.flush()
+    await write_event(
+        db,
+        action="report.updated",
+        target_type="report",
+        target_id=report.id,
+        actor=admin,
+        request=request,
+        summary=f"report {report.id} marked as {payload.status.value}",
+        payload={"status": payload.status.value, "admin_notes": payload.admin_notes},
+    )
+    return ReportRead.model_validate(report)
 
 
 # --------------------------------------------------------------------------

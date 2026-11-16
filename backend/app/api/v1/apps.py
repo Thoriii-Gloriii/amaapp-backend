@@ -19,18 +19,27 @@ from fastapi import (
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import DbSession, get_current_uploader, get_current_user, require_browse_access
+from app.api.deps import (
+    DbSession,
+    get_current_uploader,
+    get_current_user,
+    get_current_user_optional,
+    require_browse_access,
+)
 from app.api.v1.apks import (
     _apk_size_cap_bytes,
     attach_apk_to_app,
     parse_or_400,
     save_upload_to_temp,
 )
+from app.core.client_ip import client_ip, hash_ip
 from app.core.database import run_after_commit
 from app.core.download_token import sign_media_token
 from app.core.logging import get_logger
 from app.core.rate_limit import limiter
 from app.models.apk import ApkStatus
+from app.models.report import Report, ReportStatus
+from app.schemas.report import ReportCreate, ReportRead
 from app.models.app import (
     NOT_NSFW_APP,
     App,
@@ -1491,3 +1500,33 @@ async def delete_localization(
     await db.delete(target)
     await db.flush()
     await enqueue_reindex()
+
+
+@router.post("/{app_id}/report", response_model=ReportRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/hour")
+async def report_listing(
+    app_id: uuid.UUID,
+    payload: ReportCreate,
+    db: DbSession,
+    request: Request,
+    user: Annotated[User | None, Depends(get_current_user_optional)] = None,
+) -> ReportRead:
+    """Report an app/listing for moderation review. Rate-limited to 5/hour."""
+    app = (await db.execute(select(App).where(App.id == app_id))).scalar_one_or_none()
+    if app is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="App not found")
+
+    raw_ip = client_ip(request)
+    ip_hash = hash_ip(raw_ip) if raw_ip else None
+
+    report = Report(
+        app_id=app.id,
+        reporter_id=user.id if user else None,
+        reporter_ip_hash=ip_hash,
+        reason=payload.reason,
+        details=payload.details,
+        status=ReportStatus.PENDING,
+    )
+    db.add(report)
+    await db.flush()
+    return ReportRead.model_validate(report)

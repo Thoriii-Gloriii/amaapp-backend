@@ -37,6 +37,7 @@ api_router.include_router(collaborators.router, prefix="/apps", tags=["collabora
 api_router.include_router(deploy_tokens.router, prefix="/apps", tags=["deploy-tokens"])
 api_router.include_router(github_sources.router, prefix="/apps", tags=["github-sources"])
 api_router.include_router(apps.router, prefix="/apps", tags=["apps"])
+api_router.include_router(apps.router, prefix="/listings", tags=["listings"])
 api_router.include_router(apks.router, prefix="/apks", tags=["apks"])
 api_router.include_router(categories.router, prefix="/categories", tags=["categories"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
