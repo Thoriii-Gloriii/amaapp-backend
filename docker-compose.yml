@@ -37,13 +37,11 @@ services:
   # ``clamav_db`` is persisted across restarts and the healthcheck has a
   # generous ``start_period``.
   #
-  # Opt-in: this service only runs when the ``clamav`` compose profile is
-  # active (``docker compose --profile clamav up -d``). When it's off, the
-  # backend's CLAMAV_HOST is unset and the feature stays disabled. The
-  # admin UI surfaces the toggles only after the env var is present, so
-  # forgetting to enable the profile won't break uploads.
+  # ClamAV scanner on by default (AmaApp safety policy: all uploads scanned).
+  # The official image bundles ``freshclam`` (signature updater) and ``clamd``
+  # (the daemon) in one container. On a cold start, freshclam downloads ~250 MB
+  # of definitions; that's why ``clamav_db`` is persisted across restarts.
   clamav:
-    profiles: ["clamav"]
     image: clamav/clamav:stable-debian
     restart: unless-stopped
     volumes:
@@ -80,13 +78,11 @@ services:
       # Tighten it to your compose subnet
       # (``docker network inspect fdroid-store_default``) if you like.
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      # ClamAV is opt-in: defaults to empty (feature off). To enable, set
-      # CLAMAV_HOST=clamav in .env and bring the stack up with
-      # ``docker compose --profile clamav up -d`` so the scanner container
-      # is actually scheduled.
-      CLAMAV_HOST: ${CLAMAV_HOST:-}
+      # ClamAV is on by default in AmaApp:
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       CLAMAV_MAX_STREAM_MB: ${CLAMAV_MAX_STREAM_MB:-100}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       # Trivy server URL. The backend itself never scans â€” only the
       # worker does â€” but it needs to see the env var to compute
       # ``settings.trivy_available`` for the admin UI + reject toggle
@@ -177,13 +173,11 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-fdroid}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}@postgres:5432/${POSTGRES_DB:-fdroid}
       REDIS_URL: redis://redis:6379/0
-      # ClamAV is opt-in: defaults to empty (feature off). To enable, set
-      # CLAMAV_HOST=clamav in .env and bring the stack up with
-      # ``docker compose --profile clamav up -d`` so the scanner container
-      # is actually scheduled.
-      CLAMAV_HOST: ${CLAMAV_HOST:-}
+      # ClamAV is on by default in AmaApp:
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       CLAMAV_MAX_STREAM_MB: ${CLAMAV_MAX_STREAM_MB:-100}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       GITEA_TOKEN: ${GITEA_TOKEN:-}
