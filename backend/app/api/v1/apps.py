@@ -266,7 +266,15 @@ async def search_listings(
     if sort == "name":
         base_stmt = base_stmt.order_by(App.name.asc())
     elif sort == "downloads":
-        base_stmt = base_stmt.order_by(App.download_count.desc(), App.name.asc())
+        # download_count is not a stored column – compute it via a correlated
+        # subquery so the ORDER BY works without a schema change.
+        dl_subq = (
+            select(func.count(DownloadEvent.id))
+            .where(DownloadEvent.app_id == App.id)
+            .correlate(App)
+            .scalar_subquery()
+        )
+        base_stmt = base_stmt.order_by(dl_subq.desc(), App.name.asc())
     else:  # "newest" default
         base_stmt = base_stmt.order_by(
             App.last_published_at.desc().nullslast(), App.created_at.desc()
