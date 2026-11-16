@@ -39,6 +39,7 @@ from app.models.app import (
     Category,
     Localization,
 )
+from app.models.listing import ListingType, WebAppListing
 from app.models.audit import DownloadEvent
 from app.models.user import User, UserRole
 from app.schemas.apk_proxy import AppCreateFromProxy
@@ -46,6 +47,7 @@ from app.schemas.app import (
     AppCreate,
     AppCreateFromGithub,
     AppCreateFromStagedApk,
+    AppCreateWebApp,
     AppDetail,
     AppRead,
     AppUpdate,
@@ -1010,6 +1012,102 @@ async def create_app(
     return payload
 
 
+@router.post("/web-app", response_model=AppDetail, status_code=status.HTTP_201_CREATED)
+async def create_web_app(
+    payload: AppCreateWebApp,
+    db: DbSession,
+    user: Annotated[User, Depends(get_current_uploader)],
+) -> AppDetail:
+    """Create a Web App listing on AmaApp.
+
+    Web app listings store a hosted URL, title, description, and screenshots,
+    without requiring an APK file upload.
+    """
+    from app.services.quotas import ensure_can_create_app
+
+    await ensure_can_create_app(db, user)
+
+    # Validate or generate package_name / bundle id
+    pkg = payload.package_name
+    if not pkg:
+        clean_slug = re.sub(r"[^a-zA-Z0-9_]", "", payload.name.lower())[:30] or "app"
+        pkg = f"web.amaapp.{clean_slug}"
+        existing = (await db.execute(select(App).where(App.package_name == pkg))).scalar_one_or_none()
+        if existing is not None:
+            pkg = f"web.amaapp.{clean_slug}_{uuid.uuid4().hex[:6]}"
+    else:
+        existing = (await db.execute(select(App).where(App.package_name == pkg))).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Package/identifier {pkg} already exists",
+            )
+
+    categories: list[Category] = []
+    if payload.category_ids:
+        categories = list(
+            (
+                await db.execute(select(Category).where(Category.id.in_(payload.category_ids)))
+            ).scalars().all()
+        )
+
+    initial_status = AppStatus.PUBLISHED if user.role == UserRole.ADMIN else AppStatus.DRAFT
+
+    app = App(
+        package_name=pkg,
+        name=payload.name,
+        summary=payload.summary,
+        description=payload.description,
+        license=payload.license,
+        website=str(payload.url),
+        source_code=str(payload.source_code) if payload.source_code else None,
+        author_name=payload.author_name,
+        author_email=payload.author_email,
+        visibility=payload.visibility,
+        status=initial_status,
+        owner_id=user.id,
+        categories=categories,
+        listing_type=ListingType.WEB_APP,
+        is_unreviewed=user.role != UserRole.ADMIN,
+        apks=[],
+        screenshots=[],
+    )
+    db.add(app)
+    await db.flush()
+
+    web_listing = WebAppListing(
+        app_id=app.id,
+        url=str(payload.url),
+        tech_stack=payload.tech_stack,
+        screenshot_keys=payload.screenshot_keys,
+        url_check_passed=None,
+    )
+    db.add(web_listing)
+    await db.flush()
+
+    result = (
+        await db.execute(
+            select(App)
+            .execution_options(populate_existing=True)
+            .options(
+                selectinload(App.categories),
+                selectinload(App.apks),
+                selectinload(App.owner),
+                selectinload(App.screenshots),
+                selectinload(App.localizations),
+                selectinload(App.github_source),
+                selectinload(App.web_app_listing),
+            )
+            .where(App.id == app.id)
+        )
+    ).scalar_one()
+
+    payload_resp = AppDetail.model_validate(result)
+    payload_resp.owner_username = result.owner.username if result.owner else None
+    _attach_media_token(payload_resp, result, user)
+    return payload_resp
+
+
 async def _load_app_or_404(db, app_id_or_pkg: str) -> App:
     stmt = select(App).options(
         selectinload(App.categories),
@@ -1017,10 +1115,8 @@ async def _load_app_or_404(db, app_id_or_pkg: str) -> App:
         selectinload(App.owner),
         selectinload(App.screenshots),
         selectinload(App.localizations),
-        # github_source is a 1:1 backref — pulling it eagerly costs one
-        # extra round-trip and lets the YAML export endpoint render the
-        # ``Repo:`` field without re-querying.
         selectinload(App.github_source),
+        selectinload(App.web_app_listing),
     )
     try:
         pk = uuid.UUID(app_id_or_pkg)
@@ -1124,6 +1220,16 @@ async def update_app(
     # auto-tracking.
     if "suggested_version_code" in payload.model_fields_set:
         await _apply_suggested_version_override(app, payload.suggested_version_code)
+
+    if app.listing_type == ListingType.WEB_APP and payload.web_app is not None:
+        if app.web_app_listing is not None:
+            if payload.web_app.url is not None:
+                app.web_app_listing.url = str(payload.web_app.url)
+                app.website = str(payload.web_app.url)
+            if payload.web_app.tech_stack is not None:
+                app.web_app_listing.tech_stack = payload.web_app.tech_stack
+            if payload.web_app.screenshot_keys is not None:
+                app.web_app_listing.screenshot_keys = payload.web_app.screenshot_keys
 
     await db.flush()
     await enqueue_reindex()

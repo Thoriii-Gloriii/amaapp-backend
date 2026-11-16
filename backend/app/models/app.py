@@ -17,7 +17,8 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationshipfrom app.core.database import Base
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from app.core.database import Base
 from app.fdroid import categories_catalog
 from app.models.listing import ListingType  # noqa: F401 — re-exported for schemas
 from app.models.mixins import IdMixin, TimestampMixin

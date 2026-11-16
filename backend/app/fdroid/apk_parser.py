@@ -78,6 +78,7 @@ class ApkMetadata:
     app_name: str | None = None
     icon_data: bytes | None = None
     icon_extension: str | None = None
+    is_debug: bool = False
 
 
 class ApkParseError(RuntimeError):
@@ -406,6 +407,7 @@ def _extract_metadata(p: Path) -> ApkMetadata:
     # ``android.hardware.camera2`` with ``required="false"`` MUST be left
     # out, otherwise phones without that hardware are flagged incompatible.
     required_features: set[str] = set()
+    is_debug: bool = False
     try:
         manifest_xml = apk.get_android_manifest_xml()
         root = manifest_xml if hasattr(manifest_xml, "iter") else manifest_xml.getroot()
@@ -418,6 +420,14 @@ def _extract_metadata(p: Path) -> ApkMetadata:
             required_attr = (elt.get(android_required) or "true").strip().lower()
             if required_attr != "false":
                 required_features.add(name)
+
+        # AmaApp: Check debuggable attribute on <application> tag
+        for app_elt in root.iter("application"):
+            android_debuggable = "{http://schemas.android.com/apk/res/android}debuggable"
+            dbg_val = (app_elt.get(android_debuggable) or "false").strip().lower()
+            if dbg_val == "true":
+                is_debug = True
+                break
     except Exception as exc:  # noqa: BLE001
         # Worst case (parsing breaks): keep nothing rather than mark every
         # feature required and break compatibility for all users.
@@ -488,6 +498,7 @@ def _extract_metadata(p: Path) -> ApkMetadata:
         app_name=apk.get_app_name() or None,
         icon_data=icon_data,
         icon_extension=icon_ext,
+        is_debug=is_debug,
     )
 
     if not meta.package_name:
