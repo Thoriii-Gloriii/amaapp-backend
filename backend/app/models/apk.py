@@ -133,6 +133,24 @@ class Apk(Base, IdMixin, TimestampMixin):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # ------------------------------------------------------------------
+    # AmaApp additions — debug build labeling
+    # ------------------------------------------------------------------
+    # True when the APK was built in debug mode (debuggable=true in the
+    # manifest, or explicitly declared by the uploader).  Always surfaced
+    # in the API response so clients can display a warning badge.
+    is_debug_build: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, index=True
+    )
+    # Optional free-text field for the developer to record which vibe
+    # coding tool or model was used (e.g. "Cursor + Claude 3.5", "Gemini").
+    # Not validated — just informational.
+    vibe_tool: Mapped[str | None] = mapped_column(String(255))
+    # Human-readable changelog for this specific APK version, complementing
+    # whats_new (which is locale-keyed and F-Droid-formatted).  Plain text
+    # or Markdown, shown on the AmaApp listing page.
+    changelog: Mapped[str | None] = mapped_column(Text)
+
+    # ------------------------------------------------------------------
     # Reproducible Builds tracking
     # ------------------------------------------------------------------
     # Per-APK status (see ReproducibilityStatus). Default ``UNKNOWN`` so
