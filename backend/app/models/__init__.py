@@ -23,6 +23,7 @@ from app.models.deploy_token import DeployToken
 from app.models.github_source import GithubProvider, GithubSource, GithubSourceStatus
 from app.models.invite_code import InviteCode
 from app.models.listing import ListingType, WebAppListing  # AmaApp listing model
+from app.models.report import Report, ReportReason, ReportStatus  # AmaApp reporting model
 from app.models.package_signer import PackageSignerPin
 from app.models.refresh_token import RefreshToken
 from app.models.repo_config import RepoConfig
