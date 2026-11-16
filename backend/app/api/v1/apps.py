@@ -1113,6 +1113,7 @@ async def create_app(
             .options(
                 selectinload(App.categories),
                 selectinload(App.apks),
+                selectinload(App.web_app_listing),
             )
             .where(App.id == app.id)
         )
