@@ -538,3 +538,11 @@ class AppDetail(AppRead):
     # Total successful APK downloads across every version of this app,
     # counting both authenticated and anonymous traffic.
     download_count: int = 0
+
+
+class AppSearchResponse(BaseModel):
+    items: list[AppRead]
+    total: int
+    page: int
+    per_page: int
+    pages: int

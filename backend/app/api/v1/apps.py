@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 import uuid
 from typing import Annotated
@@ -59,6 +60,7 @@ from app.schemas.app import (
     AppCreateWebApp,
     AppDetail,
     AppRead,
+    AppSearchResponse,
     AppUpdate,
     LocalizationRead,
     LocalizationUpsert,
@@ -207,6 +209,97 @@ async def list_apps(
         _attach_media_token(p, a, user)
         out.append(p)
     return out
+
+
+@router.get("/search", response_model=AppSearchResponse)
+async def search_listings(
+    db: DbSession,
+    user: Annotated[User | None, Depends(require_browse_access)],
+    q: str = Query(default="", max_length=200),
+    type: str | None = Query(default=None, max_length=32),
+    tag: str | None = Query(default=None, max_length=64),
+    sort: str = Query(default="newest", max_length=32),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
+) -> AppSearchResponse:
+    """Full-text and faceted search across listings (APK & Web App)."""
+    base_stmt = select(App)
+    count_stmt = select(func.count(App.id))
+
+    if user is None or user.role != UserRole.ADMIN:
+        base_stmt = base_stmt.where(
+            App.visibility == AppVisibility.PUBLIC,
+            App.status == AppStatus.PUBLISHED,
+        )
+        count_stmt = count_stmt.where(
+            App.visibility == AppVisibility.PUBLIC,
+            App.status == AppStatus.PUBLISHED,
+        )
+
+    if not (user and user.show_nsfw):
+        base_stmt = base_stmt.where(NOT_NSFW_APP)
+        count_stmt = count_stmt.where(NOT_NSFW_APP)
+
+    if type:
+        base_stmt = base_stmt.where(App.listing_type == type)
+        count_stmt = count_stmt.where(App.listing_type == type)
+
+    if tag:
+        base_stmt = base_stmt.join(App.categories).where(Category.name.ilike(tag))
+        count_stmt = count_stmt.join(App.categories).where(Category.name.ilike(tag))
+
+    if q.strip():
+        like = f"%{q.strip()}%"
+        query_filter = or_(
+            App.name.ilike(like),
+            App.summary.ilike(like),
+            App.description.ilike(like),
+            App.package_name.ilike(like),
+            App.author_name.ilike(like),
+        )
+        base_stmt = base_stmt.where(query_filter)
+        count_stmt = count_stmt.where(query_filter)
+
+    total = (await db.execute(count_stmt)).scalar_one()
+
+    # Sorting
+    if sort == "name":
+        base_stmt = base_stmt.order_by(App.name.asc())
+    elif sort == "downloads":
+        base_stmt = base_stmt.order_by(App.download_count.desc(), App.name.asc())
+    else:  # "newest" default
+        base_stmt = base_stmt.order_by(
+            App.last_published_at.desc().nullslast(), App.created_at.desc()
+        )
+
+    offset = (page - 1) * per_page
+    stmt = (
+        base_stmt.options(
+            selectinload(App.categories),
+            selectinload(App.apks),
+            selectinload(App.localizations),
+            selectinload(App.web_app_listing),
+        )
+        .limit(per_page)
+        .offset(offset)
+    )
+
+    rows = (await db.execute(stmt)).scalars().unique().all()
+    preferred_locale = user.preferred_locale if user else None
+    items: list[AppRead] = []
+    for a in rows:
+        p = _apply_locale(AppRead.model_validate(a), a, preferred_locale)
+        _attach_media_token(p, a, user)
+        items.append(p)
+
+    pages = math.ceil(total / per_page) if per_page > 0 else 0
+    return AppSearchResponse(
+        items=items,
+        total=total,
+        page=page,
+        per_page=per_page,
+        pages=pages,
+    )
 
 
 @router.post("/with-apk", response_model=AppDetail, status_code=status.HTTP_201_CREATED)
