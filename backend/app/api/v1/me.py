@@ -41,6 +41,12 @@ async def update_me(
 ) -> UserRead:
     if payload.full_name is not None:
         user.full_name = payload.full_name
+    if "bio" in payload.model_fields_set:
+        user.bio = payload.bio
+    if "links" in payload.model_fields_set and payload.links is not None:
+        user.links = [str(lnk).strip() for lnk in payload.links if str(lnk).strip()]
+    if "avatar_url" in payload.model_fields_set:
+        user.avatar_url = payload.avatar_url
     nsfw_changed = False
     if payload.show_nsfw is not None and payload.show_nsfw != user.show_nsfw:
         user.show_nsfw = payload.show_nsfw
