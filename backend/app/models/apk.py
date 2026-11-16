@@ -151,6 +151,14 @@ class Apk(Base, IdMixin, TimestampMixin):
     changelog: Mapped[str | None] = mapped_column(Text)
 
     # ------------------------------------------------------------------
+    # VirusTotal scan metadata
+    # ------------------------------------------------------------------
+    vt_status: Mapped[str | None] = mapped_column(String(32))
+    vt_positives: Mapped[int | None] = mapped_column(Integer)
+    vt_total: Mapped[int | None] = mapped_column(Integer)
+    vt_permalink: Mapped[str | None] = mapped_column(String(512))
+
+    # ------------------------------------------------------------------
     # Reproducible Builds tracking
     # ------------------------------------------------------------------
     # Per-APK status (see ReproducibilityStatus). Default ``UNKNOWN`` so

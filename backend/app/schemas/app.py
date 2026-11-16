@@ -95,20 +95,25 @@ class ApkRead(BaseModel):
     is_debug_build: bool = False
     vibe_tool: str | None = None
     changelog: str | None = None
+    vt_status: str | None = None
+    vt_positives: int | None = None
+    vt_total: int | None = None
+    vt_permalink: str | None = None
 
     @computed_field
     @property
     def warning(self) -> str | None:
-        """Clear warning field for unreviewed or debug builds.
+        """Clear warning field for unreviewed, debug builds, or malware flags.
         Required by AmaApp safety policy.
         """
-        if self.is_debug_build and self.status != ApkStatus.PUBLISHED:
-            return "debug build, unreviewed"
-        elif self.is_debug_build:
-            return "debug build"
-        elif self.status != ApkStatus.PUBLISHED:
-            return "unreviewed"
-        return None
+        parts: list[str] = []
+        if self.is_debug_build:
+            parts.append("debug build")
+        if self.status != ApkStatus.PUBLISHED:
+            parts.append("unreviewed")
+        if self.vt_positives and self.vt_positives > 0:
+            parts.append(f"flagged by VirusTotal ({self.vt_positives}/{self.vt_total or '?'})")
+        return ", ".join(parts) if parts else None
 
 
 class ReproducibilitySet(BaseModel):

@@ -142,6 +142,11 @@ class Settings(BaseSettings):
     # circuits to SKIPPED and the admin UI marks the feature unavailable.
     trivy_server_url: str | None = None
 
+    # ----- VirusTotal (optional hash lookup) ---------------------------------
+    # Optional API key for VirusTotal API v3. When set, APK SHA-256 hashes are
+    # looked up to check for malware detections across 70+ antivirus engines.
+    virustotal_api_key: str | None = None
+
     # ----- Misc ---------------------------------------------------------------
     log_level: str = "INFO"
     # Production unless told otherwise: it is the setting that refuses the
@@ -194,6 +199,11 @@ class Settings(BaseSettings):
         scanning section + makes the worker task skip cleanly when the
         operator hasn't opted in."""
         return bool(self.trivy_server_url)
+
+    @property
+    def virustotal_available(self) -> bool:
+        """True when ``VIRUSTOTAL_API_KEY`` is set."""
+        return bool(self.virustotal_api_key)
 
     @field_validator("secret_key")
     @classmethod
