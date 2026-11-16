@@ -1024,8 +1024,17 @@ async def create_web_app(
     without requiring an APK file upload.
     """
     from app.services.quotas import ensure_can_create_app
+    from app.services.url_moderation import validate_web_app_url
 
     await ensure_can_create_app(db, user)
+
+    try:
+        validated_url = validate_web_app_url(str(payload.url))
+    except ValueError as val_err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid web app URL: {val_err}",
+        )
 
     # Validate or generate package_name / bundle id
     pkg = payload.package_name
@@ -1224,8 +1233,21 @@ async def update_app(
     if app.listing_type == ListingType.WEB_APP and payload.web_app is not None:
         if app.web_app_listing is not None:
             if payload.web_app.url is not None:
-                app.web_app_listing.url = str(payload.web_app.url)
-                app.website = str(payload.web_app.url)
+                from app.services.url_moderation import validate_web_app_url
+
+                try:
+                    validated_new_url = validate_web_app_url(str(payload.web_app.url))
+                except ValueError as val_err:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid web app URL: {val_err}",
+                    )
+                if validated_new_url != app.web_app_listing.url:
+                    app.web_app_listing.url = validated_new_url
+                    app.website = validated_new_url
+                    app.web_app_listing.url_check_passed = None
+                    if user.role != UserRole.ADMIN:
+                        app.is_unreviewed = True
             if payload.web_app.tech_stack is not None:
                 app.web_app_listing.tech_stack = payload.web_app.tech_stack
             if payload.web_app.screenshot_keys is not None:

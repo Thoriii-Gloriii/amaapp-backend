@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import aliased, selectinload
 
@@ -16,13 +17,14 @@ from app.core.uploads import normalize_image, read_capped
 from app.models.api_key import ApiKey
 from app.models.apk import Apk, ApkStatus
 from app.models.app import App, AppStatus, Category
+from app.models.listing import ListingType
 from app.models.audit import DownloadEvent
 from app.models.audit_log import AuditLog
 from app.models.invite_code import InviteCode
 from app.models.package_signer import PackageSignerPin
 from app.models.repo_config import RepoConfig
 from app.models.user import User, UserRole
-from app.schemas.app import AppAdminUpdate, AppDetail, AppRead
+from app.schemas.app import AppAdminUpdate, AppDetail, AppRead, WebAppRejectPayload
 from app.schemas.audit_log import AuditLogPage, AuditLogRead
 from app.schemas.invite import InviteCodeCreate, InviteCodeRead
 from app.schemas.repo import RepoConfigRead, RepoConfigUpdate
@@ -30,6 +32,7 @@ from app.schemas.user import AdminUserCreate, AdminUserUpdate, UserRead
 from app.services.audit import write_event
 from app.services.queue import enqueue_reindex
 from app.services.suggested_version import recompute_auto
+from app.services.url_moderation import WebAppHealthResult, check_web_app_url_health
 from app.storage import get_storage
 
 router = APIRouter()
@@ -261,6 +264,8 @@ async def admin_list_apps(
     db: DbSession,
     user: Annotated[User, Depends(get_current_admin)],
     status_filter: str | None = Query(default=None, max_length=32),
+    listing_type: str | None = Query(default=None, max_length=32),
+    is_unreviewed: bool | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> list[AppDetail]:
@@ -276,11 +281,16 @@ async def admin_list_apps(
             selectinload(App.screenshots),
             selectinload(App.localizations),
             selectinload(App.owner),
+            selectinload(App.web_app_listing),
         )
         .order_by(App.created_at.desc())
     )
     if status_filter:
         stmt = stmt.where(App.status == status_filter)
+    if listing_type:
+        stmt = stmt.where(App.listing_type == listing_type)
+    if is_unreviewed is not None:
+        stmt = stmt.where(App.is_unreviewed == is_unreviewed)
     rows = (await db.execute(stmt.limit(min(limit, 500)).offset(offset))).scalars().unique().all()
     from app.api.v1.apps import _attach_media_token
     out: list[AppDetail] = []
@@ -519,6 +529,147 @@ async def admin_delete_apk(
     # before that must not leave a published row pointing at nothing.
     run_after_commit(f"delete-apk:{apk_id}", _delete_file)
     await enqueue_reindex()
+
+
+# --------------------------------------------------------------------------
+# Web apps moderation
+# --------------------------------------------------------------------------
+@router.post("/web-apps/{app_id}/check-url", response_model=WebAppHealthResult)
+async def admin_check_web_app_url(
+    app_id: uuid.UUID,
+    db: DbSession,
+    request: Request,
+    admin: Annotated[User, Depends(get_current_admin)],
+) -> WebAppHealthResult:
+    """Run an SSRF-safe reachability check against the web app's URL."""
+    stmt = (
+        select(App)
+        .options(selectinload(App.web_app_listing))
+        .where(App.id == app_id)
+    )
+    app = (await db.execute(stmt)).scalar_one_or_none()
+    if app is None or app.listing_type != ListingType.WEB_APP or app.web_app_listing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Web app not found")
+
+    result = await check_web_app_url_health(app.web_app_listing.url)
+    app.web_app_listing.url_check_passed = result.reachable
+    await db.flush()
+    await write_event(
+        db,
+        action="app.web_app_url_checked",
+        target_type="app",
+        target_id=app.id,
+        actor=admin,
+        request=request,
+        summary=f"checked web app URL {app.web_app_listing.url}: reachable={result.reachable}",
+        payload={
+            "url": app.web_app_listing.url,
+            "reachable": result.reachable,
+            "status_code": result.status_code,
+            "error": result.error,
+        },
+    )
+    return result
+
+
+@router.post("/web-apps/{app_id}/approve", response_model=AppDetail)
+async def admin_approve_web_app(
+    app_id: uuid.UUID,
+    db: DbSession,
+    request: Request,
+    admin: Annotated[User, Depends(get_current_admin)],
+) -> AppDetail:
+    """Approve a web app listing, setting it to PUBLISHED and clearing is_unreviewed."""
+    stmt = (
+        select(App)
+        .options(
+            selectinload(App.categories),
+            selectinload(App.apks),
+            selectinload(App.screenshots),
+            selectinload(App.localizations),
+            selectinload(App.owner),
+            selectinload(App.web_app_listing),
+        )
+        .where(App.id == app_id)
+    )
+    app = (await db.execute(stmt)).scalar_one_or_none()
+    if app is None or app.listing_type != ListingType.WEB_APP or app.web_app_listing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Web app not found")
+
+    app.is_unreviewed = False
+    app.status = AppStatus.PUBLISHED
+    now = datetime.now(UTC)
+    app.last_published_at = now
+    if app.first_published_at is None:
+        app.first_published_at = now
+
+    await db.flush()
+    await write_event(
+        db,
+        action="app.web_app_approved",
+        target_type="app",
+        target_id=app.id,
+        actor=admin,
+        request=request,
+        summary=f"approved web app {app.package_name}",
+        payload={"url": app.web_app_listing.url},
+    )
+    await enqueue_reindex()
+    from app.api.v1.apps import _attach_media_token
+    detail = AppDetail.model_validate(app)
+    if app.owner is not None:
+        detail.owner_id = app.owner.id
+        detail.owner_username = app.owner.username
+    _attach_media_token(detail, app, admin)
+    return detail
+
+
+@router.post("/web-apps/{app_id}/reject", response_model=AppDetail)
+async def admin_reject_web_app(
+    app_id: uuid.UUID,
+    payload: WebAppRejectPayload,
+    db: DbSession,
+    request: Request,
+    admin: Annotated[User, Depends(get_current_admin)],
+) -> AppDetail:
+    """Reject a web app listing, setting it to REJECTED with a reason and clearing is_unreviewed."""
+    stmt = (
+        select(App)
+        .options(
+            selectinload(App.categories),
+            selectinload(App.apks),
+            selectinload(App.screenshots),
+            selectinload(App.localizations),
+            selectinload(App.owner),
+            selectinload(App.web_app_listing),
+        )
+        .where(App.id == app_id)
+    )
+    app = (await db.execute(stmt)).scalar_one_or_none()
+    if app is None or app.listing_type != ListingType.WEB_APP or app.web_app_listing is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Web app not found")
+
+    app.is_unreviewed = False
+    app.status = AppStatus.REJECTED
+
+    await db.flush()
+    await write_event(
+        db,
+        action="app.web_app_rejected",
+        target_type="app",
+        target_id=app.id,
+        actor=admin,
+        request=request,
+        summary=f"rejected web app {app.package_name}: {payload.reason}",
+        payload={"reason": payload.reason, "url": app.web_app_listing.url},
+    )
+    from app.api.v1.apps import _attach_media_token
+    detail = AppDetail.model_validate(app)
+    if app.owner is not None:
+        detail.owner_id = app.owner.id
+        detail.owner_username = app.owner.username
+    _attach_media_token(detail, app, admin)
+    return detail
 
 
 # --------------------------------------------------------------------------
